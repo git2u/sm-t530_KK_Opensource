@@ -1,0 +1,1 @@
+SM-T530	T530XXU1ANCD Opensource
