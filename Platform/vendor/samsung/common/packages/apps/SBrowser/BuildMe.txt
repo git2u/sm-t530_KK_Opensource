@@ -1,0 +1,9 @@
+Follow the following step to make libsbrowser.so
+1. Download SBrowser oslv code
+2. Download the google's opensource code
+3. Make google opensoure eng build
+4. Copy the vendor folder to <google_opensource_code> and copy libsecnativefeature.so to <google_opensource_code>/out/target/product/generic/system/lib folder
+5. run the following command to make libsbrowser.so
+    ./BuildMe_OSLV.sh  <google_opensource_code_path>
+6. libsbrowser.so will be located in the following location
+   <SBrowser_Path>/src/out/Release/lib/libsbrowser.so	

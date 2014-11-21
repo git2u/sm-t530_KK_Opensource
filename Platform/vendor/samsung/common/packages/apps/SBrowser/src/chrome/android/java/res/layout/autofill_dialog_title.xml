@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (c) 2013 The Chromium Authors. All rights reserved.
+
+     Use of this source code is governed by a BSD-style license that can be
+     found in the LICENSE file.
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <ImageView
+            android:id="@+id/accounts_logo"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_gravity="left"
+            android:layout_margin="@dimen/autofill_steady_margin"
+            android:scaleType="centerInside"
+            android:src="@drawable/wallet_logo"/>
+        <Spinner
+            android:id="@+id/accounts_spinner"
+            android:layout_width="232dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="right"
+            android:layout_margin="@dimen/autofill_steady_margin"/>
+    </FrameLayout>
+</merge>

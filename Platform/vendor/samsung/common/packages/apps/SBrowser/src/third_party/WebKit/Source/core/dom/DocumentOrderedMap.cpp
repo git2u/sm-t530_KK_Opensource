@@ -1,0 +1,277 @@
+/*
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "core/dom/DocumentOrderedMap.h"
+
+#include "HTMLNames.h"
+#include "core/dom/Element.h"
+#include "core/dom/NodeTraversal.h"
+#include "core/dom/TreeScope.h"
+#include "core/dom/WebCoreMemoryInstrumentation.h"
+#include "core/html/HTMLMapElement.h"
+#include <wtf/MemoryInstrumentationHashCountedSet.h>
+#include <wtf/MemoryInstrumentationHashMap.h>
+
+namespace WebCore {
+
+using namespace HTMLNames;
+
+inline bool keyMatchesId(AtomicStringImpl* key, Element* element)
+{
+    return element->getIdAttribute().impl() == key;
+}
+
+inline bool keyMatchesMapName(AtomicStringImpl* key, Element* element)
+{
+    return element->hasTagName(mapTag) && static_cast<HTMLMapElement*>(element)->getName().impl() == key;
+}
+
+inline bool keyMatchesLowercasedMapName(AtomicStringImpl* key, Element* element)
+{
+    return element->hasTagName(mapTag) && static_cast<HTMLMapElement*>(element)->getName().lower().impl() == key;
+}
+
+inline bool keyMatchesLabelForAttribute(AtomicStringImpl* key, Element* element)
+{
+    return element->hasTagName(labelTag) && element->getAttribute(forAttr).impl() == key;
+}
+
+void DocumentOrderedMap::clear()
+{
+    m_map.clear();
+#if !defined(SBROWSER_DOM_PERF_IMPROVEMENT)    
+    m_duplicateCounts.clear();
+#endif
+}
+
+
+#if defined(SBROWSER_DOM_PERF_IMPROVEMENT)
+void DocumentOrderedMap::add(AtomicStringImpl* key, Element* element)
+{
+    ASSERT(key);
+    ASSERT(element);
+
+    Map::AddResult addResult = m_map.add(key, MapEntry(element));
+    if (addResult.isNewEntry)
+        return;
+
+    MapEntry& entry = addResult.iterator->value;
+    ASSERT(entry.count);
+    entry.element = 0;
+    entry.count++;
+    entry.orderedList.clear();
+}
+
+void DocumentOrderedMap::remove(AtomicStringImpl* key, Element* element)
+{
+    ASSERT(key);
+    ASSERT(element);
+
+    m_map.checkConsistency();
+    if (m_map.isEmpty())
+        return;    
+    Map::iterator it = m_map.find(key);
+    if (it == m_map.end())
+        return; 
+    MapEntry& entry = it->value;
+
+    ASSERT(entry.count);
+    if (entry.count == 1) {
+        //ASSERT(!entry.element || entry.element == element);
+        m_map.remove(it);
+    } else {
+        if (entry.element == element)
+            entry.element = 0;
+        entry.count--;
+        entry.orderedList.clear(); // FIXME: Remove the element instead if there are only few items left.
+    }
+}
+
+template<bool keyMatches(AtomicStringImpl*, Element*)>
+inline Element* DocumentOrderedMap::get(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    ASSERT(key);
+    ASSERT(scope);
+
+    m_map.checkConsistency();
+
+    Map::iterator it = m_map.find(key);
+    if (it == m_map.end())
+        return 0;
+
+    MapEntry& entry = it->value;
+    ASSERT(entry.count);
+    if (entry.element)
+        return entry.element;
+
+    // We know there's at least one node that matches; iterate to find the first one.
+    for (Element* element = ElementTraversal::firstWithin(scope->rootNode()); element; element = ElementTraversal::next(element)) {
+        if (!keyMatches(key, element))
+            continue;
+        entry.element = element;
+        return element;
+    }
+    ASSERT_NOT_REACHED();
+    return 0;
+}
+#else
+void DocumentOrderedMap::add(AtomicStringImpl* key, Element* element)
+{
+    ASSERT(key);
+    ASSERT(element);
+
+    if (!m_duplicateCounts.contains(key)) {
+        // Fast path. The key is not already in m_duplicateCounts, so we assume that it's
+        // also not already in m_map and try to add it. If that add succeeds, we're done.
+        Map::AddResult addResult = m_map.add(key, element);
+        if (addResult.isNewEntry)
+            return;
+
+        // The add failed, so this key was already cached in m_map.
+        // There are multiple elements with this key. Remove the m_map
+        // cache for this key so get searches for it next time it is called.
+        m_map.remove(addResult.iterator);
+        m_duplicateCounts.add(key);
+    } else {
+        // There are multiple elements with this key. Remove the m_map
+        // cache for this key so get will search for it next time it is called.
+        Map::iterator cachedItem = m_map.find(key);
+        if (cachedItem != m_map.end()) {
+            m_map.remove(cachedItem);
+            m_duplicateCounts.add(key);
+        }
+    }
+
+    m_duplicateCounts.add(key);
+}
+
+void DocumentOrderedMap::remove(AtomicStringImpl* key, Element* element)
+{
+    ASSERT(key);
+    ASSERT(element);
+
+    m_map.checkConsistency();
+    Map::iterator cachedItem = m_map.find(key);
+    if (cachedItem != m_map.end() && cachedItem->value == element)
+        m_map.remove(cachedItem);
+    else
+        m_duplicateCounts.remove(key);
+}
+
+template<bool keyMatches(AtomicStringImpl*, Element*)>
+inline Element* DocumentOrderedMap::get(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    ASSERT(key);
+    ASSERT(scope);
+
+    m_map.checkConsistency();
+
+    Element* element = m_map.get(key);
+    if (element)
+        return element;
+
+    if (m_duplicateCounts.contains(key)) {
+        // We know there's at least one node that matches; iterate to find the first one.
+        for (element = ElementTraversal::firstWithin(scope->rootNode()); element; element = ElementTraversal::next(element)) {
+            if (!keyMatches(key, element))
+                continue;
+            m_duplicateCounts.remove(key);
+            m_map.set(key, element);
+            return element;
+        }
+        ASSERT_NOT_REACHED();
+    }
+
+    return 0;
+}
+#endif
+
+Element* DocumentOrderedMap::getElementById(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    return get<keyMatchesId>(key, scope);
+}
+
+Element* DocumentOrderedMap::getElementByMapName(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    return get<keyMatchesMapName>(key, scope);
+}
+
+Element* DocumentOrderedMap::getElementByLowercasedMapName(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    return get<keyMatchesLowercasedMapName>(key, scope);
+}
+
+Element* DocumentOrderedMap::getElementByLabelForAttribute(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    return get<keyMatchesLabelForAttribute>(key, scope);
+}
+
+#if defined(SBROWSER_DOM_PERF_IMPROVEMENT)
+const Vector<Element*>* DocumentOrderedMap::getAllElementsById(AtomicStringImpl* key, const TreeScope* scope) const
+{
+    ASSERT(key);
+    ASSERT(scope);
+
+    m_map.checkConsistency();
+
+    Map::iterator it = m_map.find(key);
+    if (it == m_map.end())
+        return 0;
+
+    MapEntry& entry = it->value;
+    ASSERT(entry.count);
+    if (!entry.count)
+        return 0;
+
+    if (entry.orderedList.isEmpty()) {
+        entry.orderedList.reserveCapacity(entry.count);
+        for (Element* element = entry.element ? entry.element : ElementTraversal::firstWithin(scope->rootNode()); element; element = ElementTraversal::next(element)) {
+            if (!keyMatchesId(key, element))
+                continue;
+            entry.orderedList.append(element);
+        }
+        ASSERT(entry.orderedList.size() == entry.count);
+    }
+
+    return &entry.orderedList;
+}
+#endif
+
+void DocumentOrderedMap::reportMemoryUsage(MemoryObjectInfo* memoryObjectInfo) const
+{
+    MemoryClassInfo info(memoryObjectInfo, this, WebCoreMemoryTypes::DOM);
+    info.addMember(m_map, "map");
+#if !defined(SBROWSER_DOM_PERF_IMPROVEMENT)    
+    info.addMember(m_duplicateCounts, "duplicateCounts");
+#endif
+}
+
+} // namespace WebCore

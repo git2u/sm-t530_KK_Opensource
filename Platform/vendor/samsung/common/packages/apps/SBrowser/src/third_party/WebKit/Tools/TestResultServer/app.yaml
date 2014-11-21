@@ -1,0 +1,19 @@
+application: test-results
+version: 1
+runtime: python27
+api_version: 1
+threadsafe: true
+
+handlers:
+- url: /stylesheets
+  static_dir: stylesheets
+
+- url: /dashboards
+  static_dir: static-dashboards
+
+- url: /testfile/delete
+  script: main.app
+  login: admin
+
+- url: /.*
+  script: main.app

@@ -1,0 +1,177 @@
+<!DOCTYPE HTML>
+<html>
+<!--
+Copyright (c) 2013 The Chromium Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+<head i18n-values="dir:textdirection;">
+<title>AnalysisView tests</title>
+<script src="/src/base.js"></script>
+</head>
+<body>
+  <script>
+    base.require('base.unittest');
+    base.require('tracing.analysis.analysis_view');
+    base.require('tracing.test_utils');
+    base.require('tracing.model');
+    base.require('tracing.selection');
+  </script>
+  <script>
+    'use strict';
+
+    var Model = tracing.Model;
+    var Selection = tracing.Selection;
+    var AnalysisView = tracing.analysis.AnalysisView;
+    var newSliceNamed = tracing.test_utils.newSliceNamed;
+
+    function testAnalyzeSelectionWithFalsyArgs() {
+      var model = new Model();
+      var t53 = model.getOrCreateProcess(52).getOrCreateThread(53);
+      var slice = newSliceNamed('b', 0, 0.002);
+      slice.args.bar = 0;
+      slice.args.foo = false;
+      t53.pushSlice(slice);
+      var t53track = {};
+      t53track.thread = t53;
+
+      var selection = new Selection();
+      selection.addSlice(t53track, slice);
+
+      var analysisEl = new AnalysisView();
+      analysisEl.selection = selection;
+      this.addHTMLOutput(undefined, analysisEl);
+      var rows = analysisEl.querySelectorAll('tr');
+      assertEquals(rows.length, 7);
+      assertEquals(' bar', rows[5].children[0].textContent);
+      assertEquals('0', rows[5].children[1].textContent);
+      assertEquals(' foo', rows[6].children[0].textContent);
+      assertEquals('false', rows[6].children[1].textContent);
+    }
+
+    function testInstantiateAnalysisWithObjects() {
+      var model = new Model();
+      var p1 = model.getOrCreateProcess(1);
+      var objects = p1.objects;
+      var i10 = objects.idWasCreated('0x1000', 'cc', 'LayerTreeHostImpl', 10);
+      var s10 = objects.addSnapshot('0x1000', 'cc', 'LayerTreeHostImpl', 10, "snapshot-1");
+      var s25 = objects.addSnapshot('0x1000', 'cc', 'LayerTreeHostImpl', 25, "snapshot-2");
+      var s40 = objects.addSnapshot('0x1000', 'cc', 'LayerTreeHostImpl', 40, "snapshot-3");
+      objects.idWasDeleted('0x1000', 'cc', 'LayerTreeHostImpl', 45);
+
+      var track = {};
+      var selection = new Selection();
+      selection.addObjectInstance(track, i10);
+      selection.addObjectSnapshot(track, s10);
+      selection.addObjectSnapshot(track, s25);
+      selection.addObjectSnapshot(track, s40);
+
+      var analysisEl = new AnalysisView();
+      analysisEl.selection = selection;
+      this.addHTMLOutput(undefined, analysisEl);
+    }
+
+    function testAnalyzeSelectionWithObjectSnapshotUnknownType() {
+      var i10 = new tracing.model.ObjectInstance({}, "0x1000", "cat", "name", 10);
+      var s10 = i10.addSnapshot(10, {foo: 1});
+
+      var selection = new tracing.Selection();
+      selection.addObjectSnapshot({}, s10);
+
+      var view = new AnalysisView();
+      view.snapshotViewRegistry = {
+        getViewConstructor: function(typeName) {
+          return undefined;
+        }
+      };
+
+      view.selection = selection;
+      assertTrue(view.currentView instanceof tracing.analysis.DefaultObjectSnapshotView);
+      assertEquals(s10, view.currentView.objectSnapshot);
+    }
+
+    function testAnalyzeSelectionWithObjectSnapshotKnownType() {
+      var i10 = new tracing.model.ObjectInstance({}, "0x1000", "cat", "name", 10);
+      var s10 = i10.addSnapshot(10, {foo: 1});
+
+      var selection = new tracing.Selection();
+      selection.addObjectSnapshot({}, s10);
+
+      var MyView = ui.define(tracing.analysis.ObjectSnapshotView);
+      MyView.prototype = {
+        __proto__: tracing.analysis.ObjectSnapshotView.prototype,
+
+        decorate: function() {
+        },
+
+        updateContents: function() {
+          this.textContent = 'hello';
+        }
+      };
+
+      var view = new AnalysisView();
+      view.snapshotViewRegistry = {
+        getViewConstructor: function(typeName) {
+          if (typeName == 'name')
+            return MyView;
+        }
+      };
+
+      view.selection = selection;
+      assertTrue(view.currentView instanceof MyView);
+      assertEquals(s10, view.currentView.objectSnapshot);
+      assertEquals('hello', view.currentView.textContent);
+    }
+
+    function testAnalyzeSelectionWithObjectInstanceUnknownType() {
+      var i10 = new tracing.model.ObjectInstance({}, "0x1000", "cat", "name", 10);
+
+      var selection = new tracing.Selection();
+      selection.addObjectInstance({}, i10);
+
+      var view = new AnalysisView();
+      view.instanceViewRegistry = {
+        getViewConstructor: function(typeName) {
+          return undefined;
+        }
+      };
+
+      view.selection = selection;
+      assertTrue(view.currentView instanceof tracing.analysis.DefaultObjectInstanceView);
+      assertEquals(i10, view.currentView.objectInstance);
+    }
+
+    function testAnalyzeSelectionWithObjectInstanceKnownType() {
+      var i10 = new tracing.model.ObjectInstance({}, "0x1000", "cat", "name", 10);
+
+      var selection = new tracing.Selection();
+      selection.addObjectInstance({}, i10);
+
+      var MyView = ui.define(tracing.analysis.ObjectInstanceView);
+      MyView.prototype = {
+        __proto__: tracing.analysis.ObjectInstanceView.prototype,
+
+        decorate: function() {
+        },
+
+        updateContents: function() {
+          this.textContent = 'hello';
+        }
+      };
+
+      var view = new AnalysisView();
+      view.instanceViewRegistry = {
+        getViewConstructor: function(typeName) {
+          if (typeName == 'name')
+            return MyView;
+        }
+      };
+
+      view.selection = selection;
+      assertTrue(view.currentView instanceof MyView);
+      assertEquals(i10, view.currentView.objectInstance);
+      assertEquals('hello', view.currentView.textContent);
+    }
+  </script>
+</body>
+</html>
